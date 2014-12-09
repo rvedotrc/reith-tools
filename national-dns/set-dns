@@ -92,7 +92,7 @@ flush_local_dns() {
     pkill dnscache || :
 }
 
-system=$( perl -e 'print $^O' )
+system=$( uname )
 if [ -f "./functions.$system" ] ; then
     . ./functions."$system"
 fi
