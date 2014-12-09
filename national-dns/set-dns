@@ -1,0 +1,129 @@
+#!/bin/bash
+
+# Horrible hack because for some reason my entry keeps disappearing from DNS.
+# Surely dhclient is meant to do this?  Or maybe its a Siemensism.
+
+set -eu
+
+ZONE=national.core.bbc.co.uk
+
+usage() {
+	cat <<EOF
+
+Usage: ./set-dns VERB [HOSTNAME [IP]]
+
+VERB may be one of:
+
+	--list-ns	List the nameservers of $ZONE
+	--check-all	Query HOSTNAME against each nameserver
+	--force		Force an update for HOSTNAME (to IP) for each nameserver
+
+HOSTNAME defaults to the output of 'hostname(1)'.  HOSTNAME should end in
+.$ZONE.
+
+IP defaults to your IP address (usually, the first 10.x IPv4 address found).
+
+EOF
+}
+
+list_ns() {
+	dig +short ns "$ZONE" | grep -vF ';'
+}
+
+force() {
+	list_ns | parallel --jobs 10 "
+		nsupdate <<-EOF >/dev/null
+			server {}
+			zone $ZONE
+			update delete $HOSTNAME. 3600 A
+			update add $HOSTNAME. 3600   A   $ETHIP
+			; show
+			send
+			answer
+EOF
+	"
+	flush_local_dns
+}
+
+check_all() {
+	list_ns | parallel --jobs 50 --tag "dig @{} +short a $HOSTNAME."
+}
+
+report() {
+	echo -n Querying nameservers...
+
+	export HOSTNAME
+	export ETHIP
+	check_all | perl -e '
+		my %ips;
+		while (<>) { /^(\S+)\t(\S+)$/ and ++$ips{$2} }
+
+		print "\n\n";
+		print "Hostname  : $ENV{HOSTNAME}\n";
+		print "Correct IP: $ENV{ETHIP}\n";
+		print "\n";
+
+		if (not %ips) {
+			print "No results found!";
+		} else {
+			my @ips = sort { $ips{$b} <=> $ips{$a} or $a cmp $b } keys %ips;
+			printf "%s\t%s\t%s\n", "count", "ok?", "IP";
+			for my $ip (@ips) {
+				printf "%d\t%s\t%s\n", $ips{$ip}, (($ip eq $ENV{ETHIP}) ? "yes" : "no"), $ip;
+			}
+		}
+
+		print "\n";
+	'
+}
+
+################################################################################
+# Functions that you may well want to override (and a mechanism to do so)
+
+get_my_ip() {
+	# darwin: "inet 10.56.108.191 netmask 0xfffffc00 broadcast 10.56.111.255"
+	# linux: "inet addr:10.161.43.156  Bcast:10.161.43.255  Mask:255.255.252.0"
+	/sbin/ifconfig | perl -nle '/inet (?:addr:)?(10\.[0-9.]+)/ and print $1 and ++$ok;END{exit 1 if not $ok}'
+}
+
+flush_local_dns() {
+	pkill dnscache || :
+}
+
+system=$( perl -e 'print $^O' )
+if [ -f "./functions.$system" ] ; then
+	. ./functions."$system"
+fi
+
+################################################################################
+
+if [ $# == 0 ] ; then
+	usage
+	exit 2
+fi
+
+if [ "$1" == "--help" ] ; then
+	usage
+	exit
+fi
+
+verb="$1" ; shift
+
+HOSTNAME=${1:-$( hostname )}
+ETHIP=${2:-$( get_my_ip )}
+
+case "$HOSTNAME" in
+	*.$ZONE) ;;
+	*) echo "Hostname '$HOSTNAME' is not in zone '$ZONE'" >&2 ; exit 1 ;;
+esac
+
+case "$verb" in
+	--list-ns) list_ns ;;
+	--check-all) check_all ;;
+	--report) report ;;
+	#--auto) if ! check >/dev/null ; then force ; fi ;;
+	--force) force ;;
+	*) echo "Unknown invocation - try --help" >&2 ; exit 2 ;;
+esac
+
+# eof

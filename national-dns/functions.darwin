@@ -1,0 +1,6 @@
+#!/bin/bash
+
+flush_local_dns() {
+	sudo discoveryutil udnsflushcaches
+}
+
