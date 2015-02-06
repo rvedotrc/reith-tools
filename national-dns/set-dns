@@ -37,8 +37,8 @@ force() {
         nsupdate <<-EOF >/dev/null
             server {}
             zone $ZONE
-            update delete $HOSTNAME. 3600 A
-            update add $HOSTNAME. 3600   A   $ETHIP
+            update delete $national_hostname. 3600 A
+            update add $national_hostname. 3600   A   $reith_ip_addr
             ; show
             send
             answer
@@ -48,21 +48,21 @@ EOF
 }
 
 check_all() {
-    list_ns | parallel --jobs 50 --tag "dig @{} +short a $HOSTNAME."
+    list_ns | parallel --jobs 50 --tag "dig @{} +short a $national_hostname."
 }
 
 report() {
     echo -n Querying nameservers...
 
-    export HOSTNAME
-    export ETHIP
+    export national_hostname
+    export reith_ip_addr
     check_all | perl -e '
         my %ips;
         while (<>) { /^(\S+)\t(\S+)$/ and ++$ips{$2} }
 
         print "\n\n";
-        print "Hostname  : $ENV{HOSTNAME}\n";
-        print "Correct IP: $ENV{ETHIP}\n";
+        print "Hostname  : $ENV{national_hostname}\n";
+        print "Correct IP: $ENV{reith_ip_addr}\n";
         print "\n";
 
         if (not %ips) {
@@ -71,7 +71,7 @@ report() {
             my @ips = sort { $ips{$b} <=> $ips{$a} or $a cmp $b } keys %ips;
             printf "%s\t%s\t%s\n", "count", "ok?", "IP";
             for my $ip (@ips) {
-                printf "%d\t%s\t%s\n", $ips{$ip}, (($ip eq $ENV{ETHIP}) ? "yes" : "no"), $ip;
+                printf "%d\t%s\t%s\n", $ips{$ip}, (($ip eq $ENV{reith_ip_addr}) ? "yes" : "no"), $ip;
             }
         }
 
@@ -85,7 +85,7 @@ report() {
 get_my_ip() {
     # darwin: "inet 10.56.108.191 netmask 0xfffffc00 broadcast 10.56.111.255"
     # linux: "inet addr:10.161.43.156  Bcast:10.161.43.255  Mask:255.255.252.0"
-    /sbin/ifconfig | perl -nle '/inet (?:addr:)?(10\.[0-9.]+)/ and print $1 and ++$ok;END{exit 1 if not $ok}'
+    /sbin/ifconfig | perl -nle '/inet (?:addr:)?(?!127)([0-9.]+)/ and print $1 and ++$ok;END{exit 1 if not $ok}'
 }
 
 flush_local_dns() {
@@ -111,12 +111,28 @@ fi
 
 verb="$1" ; shift
 
-HOSTNAME=${1:-$( hostname )}
-ETHIP=${2:-$( get_my_ip )}
+national_hostname="${1:-}"
+if [ ! "${national_hostname:-}" ] ; then
+    echo -n "Using default HOSTNAME, "
+    national_hostname=$( hostname )
+    echo "$national_hostname"
+fi
 
-case "$HOSTNAME" in
+reith_ip_addr="${2:-}"
+if [ ! "${reith_ip_addr:-}" ] ; then
+    echo -n "Using default IP address, "
+    reith_ip_addr="$( get_my_ip )"
+    echo "$reith_ip_addr"
+fi
+
+case "$national_hostname" in
     *.$ZONE) ;;
-    *) echo "Hostname '$HOSTNAME' is not in zone '$ZONE'" >&2 ; exit 1 ;;
+    *) echo "Hostname '$national_hostname' is not in zone '$ZONE'" >&2 ; exit 1 ;;
+esac
+
+case "$reith_ip_addr" in
+    10.*) ;;
+    *) echo "IP '$reith_ip_addr' is not 10.*" >&2 ; exit 1 ;;
 esac
 
 case "$verb" in
